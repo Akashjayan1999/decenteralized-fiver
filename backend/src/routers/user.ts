@@ -8,6 +8,15 @@ import { authMiddleware } from "../middleware";
 import { createTaskInput } from "../types";
 const router = Router();
 const prismaClient = new PrismaClient();
+prismaClient.$transaction(
+    async (prisma) => {
+      // Code running in a transaction...
+    },
+    {
+      maxWait: 5000, // default: 2000
+      timeout: 10000, // default: 5000
+    }
+)
 const s3Client = new S3Client({
     credentials: {
         accessKeyId: process.env.ACCESS_KEY_ID ?? "",

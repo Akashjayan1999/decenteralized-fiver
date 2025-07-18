@@ -9,7 +9,15 @@ import { createSubmissionInput } from "../types";
 const TOTAL_SUBMISSIONS = 100;
 const prismaClient = new PrismaClient();
 const router = Router();
-
+prismaClient.$transaction(
+    async (prisma) => {
+      // Code running in a transaction...
+    },
+    {
+      maxWait: 5000, // default: 2000
+      timeout: 10000, // default: 5000
+    }
+);
 router.post("/signin", async (req, res) => {
   const hardCodedWalletAdderss = "rqnYjqscTdhCKDdYyaXTCygD6s1EZZohiKPKmEbmHLk";
     const existingUser = await prismaClient.worker.findFirst({
