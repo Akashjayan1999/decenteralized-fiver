@@ -6,6 +6,8 @@ import { createPresignedPost } from '@aws-sdk/s3-presigned-post'
 import { JWT_SECRET,TOTAL_DECIMALS } from "../config";
 import { authMiddleware } from "../middleware";
 import { createTaskInput } from "../types";
+import nacl from "tweetnacl";
+import { PublicKey, Connection, Transaction } from "@solana/web3.js";
 const router = Router();
 const prismaClient = new PrismaClient();
 prismaClient.$transaction(
@@ -24,6 +26,7 @@ const s3Client = new S3Client({
     },
     region: "us-east-1"
 })
+const connection = new Connection(process.env.RPC_URL ?? "");
 const PARENT_WALLET_ADDRESS = "2KeovpYvrgpziaDsq8nbNMP4mc48VNBVXb5arbqrg9Cq";
     
 const DEFAULT_TITLE = "Select the most clickable thumbnail";
@@ -41,27 +44,55 @@ const DEFAULT_TITLE = "Select the most clickable thumbnail";
  */
 
 
-router.post("/signin", async (req, res) => {
-  const hardCodedWalletAdderss = "rqnYjqscTdhCKDdYyaXTCygD6s1EZZohiKPKmEbmHLf";
-  const existingUser = await prismaClient.user.findFirst({
-    where: {
-      address: hardCodedWalletAdderss,
-    },
-  });
+router.post("/signin", async(req, res) => {
+    const { publicKey, signature } = req.body;
+    const message = new TextEncoder().encode("Sign into mechanical turks");
 
-  if (existingUser) {
-    const token = jwt.sign({ userId: existingUser.id }, JWT_SECRET);
-    res.json({ token });
-  } else {
-    const user = await prismaClient.user.create({
-      data: {
-        address: hardCodedWalletAdderss,
-      },
-    });
-    const token = jwt.sign({ userId: user.id }, JWT_SECRET);
-    res.json({ token });
-  }
-}); 
+    const result = nacl.sign.detached.verify(
+        message,
+        new Uint8Array(signature.data),
+        new PublicKey(publicKey).toBytes(),
+    );
+
+
+    if (!result) {
+         res.status(411).json({
+            message: "Incorrect signature"
+        })
+        return;
+    }
+
+    const existingUser = await prismaClient.user.findFirst({
+        where: {
+            address: publicKey
+        }
+    })
+
+    if (existingUser) {
+        const token = jwt.sign({
+            userId: existingUser.id
+        }, JWT_SECRET)
+
+        res.json({
+            token
+        })
+    } else {
+        const user = await prismaClient.user.create({
+            data: {
+                address: publicKey,
+            }
+        })
+
+        const token = jwt.sign({
+            userId: user.id
+        }, JWT_SECRET)
+
+        res.json({
+            token
+        })
+    }
+});
+
 
 router.get("/presignedUrl", authMiddleware, async (req, res) => {
   // @ts-ignore
