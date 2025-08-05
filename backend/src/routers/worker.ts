@@ -1,14 +1,20 @@
+import nacl from "tweetnacl";
+import { PrismaClient } from "@prisma/client";
 import { Router } from "express";
 import jwt from "jsonwebtoken";
-import { WORKER_JWT_SECRET } from "../config";
-import { PrismaClient } from "@prisma/client";
 import { workerMiddleware } from "../middleware";
+import { TOTAL_DECIMALS, WORKER_JWT_SECRET } from "../config";
 import { getNextTask } from "../db";
 import { createSubmissionInput } from "../types";
+import { Connection, Keypair, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction } from "@solana/web3.js";
+import { privateKey } from "../privateKey";
+import { decode } from "bs58";
+const connection = new Connection(process.env.RPC_URL ?? "");
 
 const TOTAL_SUBMISSIONS = 100;
+
 const prismaClient = new PrismaClient();
-const router = Router();
+
 prismaClient.$transaction(
     async (prisma) => {
       // Code running in a transaction...
@@ -17,30 +23,9 @@ prismaClient.$transaction(
       maxWait: 5000, // default: 2000
       timeout: 10000, // default: 5000
     }
-);
-router.post("/signin", async (req, res) => {
-  const hardCodedWalletAdderss = "rqnYjqscTdhCKDdYyaXTCygD6s1EZZohiKPKmEbmHLk";
-    const existingUser = await prismaClient.worker.findFirst({
-      where: {
-        address: hardCodedWalletAdderss,
-      },
-    });
-  
-    if (existingUser) {
-      const token = jwt.sign({ userId: existingUser.id }, WORKER_JWT_SECRET);
-      res.json({ token });
-    } else {
-      const user = await prismaClient.worker.create({
-        data: {
-          address: hardCodedWalletAdderss,
-          pending_amount: 0,
-          locked_amount: 0,
-        },
-      });
-      const token = jwt.sign({ userId: user.id }, WORKER_JWT_SECRET);
-      res.json({ token });
-    }
-});
+)
+
+const router = Router();
 
 router.post("/payout", workerMiddleware, async (req, res) => {
     // @ts-ignore
@@ -50,10 +35,9 @@ router.post("/payout", workerMiddleware, async (req, res) => {
     })
 
     if (!worker) {
-         res.status(403).json({
+        return res.status(403).json({
             message: "User not found"
         })
-        return;
     }
 
     const transaction = new Transaction().add(
@@ -81,10 +65,9 @@ router.post("/payout", workerMiddleware, async (req, res) => {
         );
     
      } catch(e) {
-         res.json({
+        return res.json({
             message: "Transaction failed"
         })
-        return;
      }
     
     console.log(signature)
@@ -123,7 +106,6 @@ router.post("/payout", workerMiddleware, async (req, res) => {
 
 })
 
-
 router.get("/balance", workerMiddleware, async (req, res) => {
     // @ts-ignore
     const userId: string = req.userId;
@@ -150,10 +132,9 @@ router.post("/submission", workerMiddleware, async (req, res) => {
     if (parsedBody.success) {
         const task = await getNextTask(Number(userId));
         if (!task || task?.id !== Number(parsedBody.data.taskId)) {
-             res.status(411).json({
+            return res.status(411).json({
                 message: "Incorrect task id"
             })
-            return;
         }
 
         const amount = (Number(task.amount) / TOTAL_SUBMISSIONS).toString();
@@ -214,5 +195,57 @@ router.get("/nextTask", workerMiddleware, async (req, res) => {
         })
     }
 })
+
+router.post("/signin", async(req, res) => {
+    const { publicKey, signature } = req.body;
+    const message = new TextEncoder().encode("Sign into mechanical turks as a worker");
+
+    const result = nacl.sign.detached.verify(
+        message,
+        new Uint8Array(signature.data),
+        new PublicKey(publicKey).toBytes(),
+    );
+
+    if (!result) {
+         res.status(411).json({
+            message: "Incorrect signature"
+        })
+        return;
+    }
+
+    const existingUser = await prismaClient.worker.findFirst({
+        where: {
+            address: publicKey
+        }
+    })
+
+    if (existingUser) {
+        const token = jwt.sign({
+            userId: existingUser.id
+        }, WORKER_JWT_SECRET)
+
+        res.json({
+            token,
+            amount: existingUser.pending_amount / TOTAL_DECIMALS
+        })
+    } else {
+        const user = await prismaClient.worker.create({
+            data: {
+                address: publicKey,
+                pending_amount: 0,
+                locked_amount: 0
+            }
+        });
+
+        const token = jwt.sign({
+            userId: user.id
+        }, WORKER_JWT_SECRET)
+
+        res.json({
+            token,
+            amount: 0
+        })
+    }
+});
 
 export default router;

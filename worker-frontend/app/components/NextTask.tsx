@@ -1,6 +1,5 @@
-
 "use client"
-import { BACKEND_URL } from "../utils";
+import { BACKEND_URL } from "@/utils";
 import axios from "axios";
 import { useEffect, useState } from "react"
 
